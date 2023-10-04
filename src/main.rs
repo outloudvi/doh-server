@@ -39,6 +39,7 @@ fn main() {
         listen_address: LISTEN_ADDRESS.parse().unwrap(),
         local_bind_address: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
         server_address: SERVER_ADDRESS.parse().unwrap(),
+        alt_server_address: SERVER_ADDRESS.parse().unwrap(),
         path: PATH.to_string(),
         max_clients: MAX_CLIENTS,
         timeout: Duration::from_secs(TIMEOUT_SEC),

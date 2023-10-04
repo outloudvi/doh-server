@@ -20,6 +20,7 @@ pub struct Globals {
     pub listen_address: SocketAddr,
     pub local_bind_address: SocketAddr,
     pub server_address: SocketAddr,
+    pub alt_server_address: SocketAddr,
     pub path: String,
     pub max_clients: usize,
     pub timeout: Duration,

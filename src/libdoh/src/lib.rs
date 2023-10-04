@@ -18,6 +18,7 @@ use futures::task::{Context, Poll};
 use hyper::http;
 use hyper::server::conn::Http;
 use hyper::{Body, HeaderMap, Method, Request, Response, StatusCode};
+use rustdns::Message as DnsMessage;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio::runtime;
@@ -142,7 +143,8 @@ impl DoH {
     }
 
     async fn serve_doh_query(&self, query: Vec<u8>) -> Result<Response<Body>, http::Error> {
-        let resp = match self.proxy(query).await {
+        let is_alt = DnsMessage::from_slice(&query).is_err();
+        let resp = match self.proxy(query, is_alt).await {
             Ok(resp) => {
                 self.build_response(resp.packet, resp.ttl, DoHType::Standard.as_str(), true)
             }
@@ -204,7 +206,7 @@ impl DoH {
             Ok((q, context)) => (q.to_vec(), context),
             Err(e) => return http_error(StatusCode::from(e)),
         };
-        let resp = match self.proxy(query).await {
+        let resp = match self.proxy(query, false).await {
             Ok(resp) => resp,
             Err(e) => return http_error(StatusCode::from(e)),
         };
@@ -337,13 +339,13 @@ impl DoH {
         Ok(query)
     }
 
-    async fn proxy(&self, query: Vec<u8>) -> Result<DnsResponse, DoHError> {
+    async fn proxy(&self, query: Vec<u8>, is_alt: bool) -> Result<DnsResponse, DoHError> {
         let proxy_timeout = self.globals.timeout;
-        let timeout_res = tokio::time::timeout(proxy_timeout, self._proxy(query)).await;
+        let timeout_res = tokio::time::timeout(proxy_timeout, self._proxy(query, is_alt)).await;
         timeout_res.map_err(|_| DoHError::UpstreamTimeout)?
     }
 
-    async fn _proxy(&self, mut query: Vec<u8>) -> Result<DnsResponse, DoHError> {
+    async fn _proxy(&self, mut query: Vec<u8>, is_alt: bool) -> Result<DnsResponse, DoHError> {
         if query.len() < MIN_DNS_PACKET_LEN {
             return Err(DoHError::Incomplete);
         }
@@ -351,15 +353,20 @@ impl DoH {
         let globals = &self.globals;
         let mut packet = vec![0; MAX_DNS_RESPONSE_LEN];
         let (min_ttl, max_ttl, err_ttl) = (globals.min_ttl, globals.max_ttl, globals.err_ttl);
+        let server_address = if is_alt {
+            globals.alt_server_address
+        } else {
+            globals.server_address
+        };
 
         // UDP
         {
             let socket = UdpSocket::bind(&globals.local_bind_address)
                 .await
                 .map_err(DoHError::Io)?;
-            let expected_server_address = globals.server_address;
+            let expected_server_address = server_address;
             socket
-                .send_to(&query, &globals.server_address)
+                .send_to(&query, &expected_server_address)
                 .map_err(DoHError::Io)
                 .await?;
             let (len, response_server_address) =
@@ -378,15 +385,12 @@ impl DoH {
             {
                 return Err(DoHError::TooManyTcpSessions);
             }
-            let socket = match globals.server_address {
+            let socket = match server_address {
                 SocketAddr::V4(_) => TcpSocket::new_v4(),
                 SocketAddr::V6(_) => TcpSocket::new_v6(),
             }
             .map_err(DoHError::Io)?;
-            let mut ext_socket = socket
-                .connect(globals.server_address)
-                .await
-                .map_err(DoHError::Io)?;
+            let mut ext_socket = socket.connect(server_address).await.map_err(DoHError::Io)?;
             ext_socket.set_nodelay(true).map_err(DoHError::Io)?;
             let mut binlen = [0u8, 0];
             BigEndian::write_u16(&mut binlen, query.len() as u16);

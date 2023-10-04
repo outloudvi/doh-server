@@ -60,6 +60,14 @@ pub fn parse_opts(globals: &mut Globals) {
                 .help("Address to connect to"),
         )
         .arg(
+            Arg::new("alt_server_address")
+                .long("alt-server-address")
+                .num_args(1)
+                .default_value(SERVER_ADDRESS)
+                .value_parser(verify_remote_server)
+                .help("Alternative address to connect to for unrecognized queries"),
+        )
+        .arg(
             Arg::new("local_bind_address")
                 .short('b')
                 .long("local-bind-address")
